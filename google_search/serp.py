@@ -110,6 +110,8 @@ def _pagination(parsed, page, num):
 
 _META_REFRESH_RE = re.compile(r'<meta[^>]+content="\d+;\s*url=([^"]+)"[^>]*http-equiv="refresh"'
                               r'|<meta[^>]+http-equiv="refresh"[^>]*content="\d+;\s*url=([^"]+)"', re.I)
+# a redirect that is not the publisher: Google's own /goto and /url wrappers and its /sorry captcha
+_GOOGLE_HOP_RE = re.compile(r"^https?://www\.google\.com/(goto|url|sorry)[/?]", re.I)
 
 
 def _redirect_target(link):
@@ -122,12 +124,16 @@ def _redirect_target(link):
     except Exception:
         return None
     if resp.status_code in (301, 302, 303, 307, 308):
-        return resp.headers.get("location") or None
-    if resp.status_code == 200:
+        target = resp.headers.get("location") or None
+    elif resp.status_code == 200:
         m = _META_REFRESH_RE.search(resp.text or "")
         target = htmllib.unescape(m.group(1) or m.group(2)) if m else None
-        if target and target.startswith(("http://", "https://")) and not _GOTO_RE.match(target):
-            return target
+    else:
+        target = None
+    # never a Google hop (the /sorry captcha a rate-limited signed link
+    # redirects to, or another wrapper): it would be cached as the publisher
+    if target and target.startswith(("http://", "https://")) and not _GOOGLE_HOP_RE.match(target):
+        return target
     return None
 
 

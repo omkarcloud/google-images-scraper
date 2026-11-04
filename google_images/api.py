@@ -212,6 +212,7 @@ def image_details(image, country, language):
     main["source"]["page_link"] = main["source"]["page_link"] or page_link
     main["google_link"] = refs.google_link(tbnid, main["page_id"], main["link"], main["source"]["page_link"])
     main["is_licensable"] = bool(main["is_licensable"] or record["is_licensable"])
+    _remember([main])    # a bare id (and the related fallback's page link) now works after details too
     token = record["related_token"]
     return {
         **main,

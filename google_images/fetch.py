@@ -94,9 +94,11 @@ def _fragment_verdict(resp):
     if "/sorry/" in url or resp.status_code == 429:
         return "sorry"
     text = resp.text or ""
-    # the botguard wall's own marker (google_images/fixtures/wall.html); an
-    # empty fragment or an unknown id's permalink page carries none of it
-    if resp.status_code == 200 and "emsg=SG_REL" in text and "data-docid" not in text:
+    # the botguard wall's own markers (google_images/fixtures/wall.html: the
+    # SG_REL error code and the big "enable JavaScript" shell); an empty
+    # fragment or an unknown id's permalink page carries none of them
+    wall = "emsg=SG_REL" in text or ("enablejs" in text and len(text) > 50_000)
+    if resp.status_code == 200 and wall and "data-docid" not in text:
         return "wall"
     return "ok"
 

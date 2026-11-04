@@ -46,6 +46,8 @@ def test_details_from_the_google_link_alone(offline):
     assert out["related_images_count"] == 12 and out["related_images_link"].startswith("https://www.google.com/search?udm=2&tbs=rimg")
     assert out["google_link"] == refs.google_link(AKC, AKC_PAGE, AKC_LINK, AKC_PAGE_LINK)
     assert "position" not in out
+    # the record is remembered: a bare id (and the related fallback's page link) works from here on
+    assert api._known(AKC)["source"]["page_link"] == AKC_PAGE_LINK and api._known(AKC)["page_id"] == AKC_PAGE
 
 
 def test_details_fills_from_a_remembered_search_tile(offline):
@@ -79,6 +81,7 @@ def test_wall_verdict_is_the_wall_marker_only():
         def __init__(self, text, status=200, url="https://www.google.com/x"):
             self.text, self.status_code, self.url = text, status, url
     assert fetch._fragment_verdict(R(load("wall.html"))) == "wall"
+    assert fetch._fragment_verdict(R("enablejs " * 10_000)) == "wall"           # the older wall shell, no SG_REL
     assert fetch._fragment_verdict(R(load("pod_permalink_unknown_id.html"))) == "ok"
     assert fetch._fragment_verdict(R(load("pod_fragment_start30_empty.html"))) == "ok"
     assert fetch._fragment_verdict(R(load("pod_permalink_page.html"))) == "ok"
