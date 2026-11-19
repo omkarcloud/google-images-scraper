@@ -89,6 +89,75 @@ def test_wall_verdict_is_the_wall_marker_only():
     assert fetch._fragment_verdict(R("", 200, "https://www.google.com/sorry/index?x")) == "sorry"
 
 
+class _Resp:
+    def __init__(self, text="", status=200, url="https://www.google.com/search?q=x&udm=2"):
+        self.text, self.status_code, self.url = text, status, url
+
+
+FORBIDDEN = "<html><title>Error 403 (Forbidden)!!1</title><p>Your client does not have permission to get URL</p></html>"
+
+
+def test_a_403_is_a_verdict_of_its_own():
+    assert fetch._page_verdict(_Resp(FORBIDDEN, 403)) == "refused"
+    assert fetch._fragment_verdict(_Resp(FORBIDDEN, 403)) == "refused"
+    assert fetch.identity.classify(FORBIDDEN, "https://www.google.com/search?q=x") == "ok"    # why it needs one
+    assert fetch._page_verdict(_Resp(load("search_page1.html"))) == "ok"
+    assert fetch._page_verdict(_Resp(load("wall.html"))) == "wall"
+    assert fetch._page_verdict(_Resp("", 200, "https://www.google.com/sorry/index?x")) == "sorry"
+
+
+@pytest.fixture
+def pool(monkeypatch):
+    """identity.replay's own loop over a scripted pool: each identity answers
+    what `answers` says for its exit; returns the identities handed out and
+    the ones retired."""
+    state = {"out": [], "retired": [], "answers": {}}
+
+    class Ident:
+        def __init__(self, n):
+            self.key = self.exit = f"exit-{n}"
+            self.ua, self.cookies, self.proxy = "ua", {}, None
+
+    class Session:
+        def __init__(self, ident):
+            self.ident = ident
+
+        def get(self, url, **kwargs):
+            return state["answers"].get(self.ident.exit, _Resp(load("search_page1.html")))
+
+    def checkout():
+        live = [n for n in range(1, 9) if f"exit-{n}" not in state["retired"]]
+        ident = Ident(live[0])
+        state["out"].append(ident.exit)
+        return ident
+
+    monkeypatch.setattr(fetch.identity, "checkout", checkout)
+    monkeypatch.setattr(fetch.identity, "checkin", lambda ident: None)
+    monkeypatch.setattr(fetch.identity, "_session_for", lambda ident: Session(ident))
+    monkeypatch.setattr(fetch.identity, "_drop_session", lambda ident: None)
+    monkeypatch.setattr(fetch.identity, "retire", lambda ident, reason: state["retired"].append(ident.exit))
+    monkeypatch.setattr(fetch.gfetch, "dump_debug", lambda *a, **k: None)
+    return state
+
+
+def test_a_refused_identity_is_retired_and_the_next_one_answers(pool):
+    # prod 2026-11-19: the refused identity answered every search for 17 minutes
+    pool["answers"] = {"exit-1": _Resp(FORBIDDEN, 403)}
+    html = fetch.results_page({"q": "red fox", "udm": 2})
+    assert "data-docid" in html and pool["out"] == ["exit-1", "exit-2"] and pool["retired"] == ["exit-1"]
+    assert "data-docid" in fetch.results_page({"q": "red fox", "udm": 2})          # and it is gone for the next call
+    assert pool["out"] == ["exit-1", "exit-2", "exit-2"]
+    pool["answers"]["exit-2"] = _Resp(FORBIDDEN, 403)                              # fragments too
+    assert fetch.results_fragment({"q": "red fox", "udm": 2}, 10) and pool["retired"] == ["exit-1", "exit-2"]
+
+
+def test_refused_on_every_identity_is_blocked(pool):
+    pool["answers"] = {f"exit-{n}": _Resp(FORBIDDEN, 403) for n in range(1, 9)}
+    with pytest.raises(fetch.GoogleImagesBlocked, match="refused page for every identity"):
+        fetch.results_page({"q": "red fox", "udm": 2})
+    assert len(pool["retired"]) == fetch.identity.MAX_ATTEMPTS
+
+
 def test_related_falls_back_to_the_permalink_token(offline, monkeypatch):
     viewer = parsers.parse_viewer(load("pod_viewer.html"), AKC)
     viewer["related_token"] = None                       # a viewer answer without the token

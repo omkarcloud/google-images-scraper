@@ -122,3 +122,42 @@ def test_every_field_has_a_description():
                          ("reverse", schemas.ReverseSearchSchema)):
         missing = [f for f, field in schema().fields.items() if not field.metadata.get("description")]
         assert not missing, f"{name}: fields without a description: {missing}"
+
+
+# ---- empty params (a form that sends every field) --------------------------------------------------
+
+from schema_fields import load_query  # noqa: E402
+
+VALID = {"query": "red fox", "image": AKC}
+ALL = [schemas.ImagesSearchSchema, schemas.ImageSchema, schemas.RelatedImagesSchema, schemas.AutocompleteSchema,
+       schemas.ReverseSearchSchema]
+
+
+@pytest.mark.parametrize("schema_cls", ALL, ids=lambda c: c.__name__)
+def test_an_empty_optional_param_is_the_absent_param(schema_cls):
+    fields = {field.data_key or name: field for name, field in schema_cls().fields.items()}
+    base = {key: ("https://example.com/a.jpg" if schema_cls is schemas.ReverseSearchSchema else VALID[key])
+            for key, field in fields.items() if field.required}
+    expected, error = load_query(schema_cls, base)
+    assert error is None
+    for key, field in fields.items():
+        data, error = load_query(schema_cls, dict(base, **{key: ""}))      # raises (= bottle 500) on a crash
+        if field.required:
+            assert data is None and key in error["errors"]
+        else:
+            assert error is None and data == expected, key
+    everything = {key: "  " for key in fields if key not in base}
+    assert load_query(schema_cls, dict(base, **everything)) == (expected, None)
+
+
+def test_the_requests_that_were_a_500():
+    # 2026-11-19 08:0x UTC, a support test of /images/search with every field sent
+    data, error = load_query(schemas.ImagesSearchSchema, {"query": "red fox", "location": "", "country": "", "page": ""})
+    assert error is None and (data["location"], data["country"], data["page"]) == (None, "US", 1)
+    data, error = load_query(schemas.RelatedImagesSchema, {"image": AKC, "query": "", "page": ""})
+    assert error is None and data["query"] is None and data["page"] == 1
+    assert load_query(schemas.ReverseSearchSchema, {"image": "https://example.com/a.jpg", "match": ""})[0]["match"] == "exact"
+    # a filled value is still checked
+    assert "location" in load_query(schemas.ImagesSearchSchema, {"query": "x", "location": "y" * 64})[1]["errors"]
+    assert "page" in load_query(schemas.ImagesSearchSchema, {"query": "x", "page": "abc"})[1]["errors"]
+

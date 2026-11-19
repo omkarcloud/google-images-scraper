@@ -34,6 +34,18 @@ class _Localized(BaseSchema):
     country = CountryField(metadata={"description": "Google country (gl), ISO-2; default US"})
     language = LanguageField(metadata={"description": "interface language (hl), ISO 639-1; default en"})
 
+    @pre_load
+    def empty_is_absent(self, data, **kwargs):
+        """An optional param sent empty (`location=`, `page=`, `country=`: a
+        form that sends every field) is the absent param. Left in, the
+        fields hand their validators None (`location=` and related's
+        `query=` were a 500, len(None)), `page=` / `limit=` were refused as
+        "not a valid integer", and `country=` / `language=` / `match=` lost
+        their defaults. A required param sent empty is still refused."""
+        required = {field.data_key or name for name, field in self.fields.items() if field.required}
+        return {key: value for key, value in data.items()
+                if key in required or not (isinstance(value, str) and not value.strip())}
+
 
 class ImagesSearchSchema(_Localized):
     query = ImagesQueryField(metadata={"description": "search term, or a Google Images link (google.com/search?q=…&udm=2)"})

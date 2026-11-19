@@ -86,11 +86,31 @@ class GoogleImagesNotFound(NotFound):
 
 # ---- identity-backed surfaces ---------------------------------------------------------------------
 
+# HTTP 403 is Google turning the IDENTITY away (its exit / cookies), not the
+# request: prod 2026-11-19 07:54-08:11 UTC, every images search was a 502
+# "images-search: HTTP 403" for 17 minutes, 15 in a row, while two identities
+# minted after it sat unused. The SERP classifier reads a 403 page as "ok"
+# (it carries neither the /sorry nor the wall markers), so the response came
+# back here, the identity went back to the pool and, being the most used,
+# was handed to the next call. As a verdict of its own ("refused") the
+# identity is retired and the call moves on to the next one.
+
+def _page_verdict(resp):
+    """The identity verdict for a results page: the SERP classifier's
+    ('sorry' revives, 'wall' retires), plus 'refused' for an HTTP 403."""
+    if resp.status_code == 403:
+        return "refused"
+    return identity.classify(resp.text, str(resp.url))
+
+
 def _fragment_verdict(resp):
     """The identity verdict for a fragment: 'sorry' re-mints / revives,
-    'wall' retires the identity, anything else (an empty fragment, an HTTP
-    400 for bad params) comes back to the caller as the response."""
+    'wall' and 'refused' (HTTP 403) retire the identity, anything else (an
+    empty fragment, an HTTP 400 for bad params) comes back to the caller as
+    the response."""
     url = str(resp.url)
+    if resp.status_code == 403:
+        return "refused"
     if "/sorry/" in url or resp.status_code == 429:
         return "sorry"
     text = resp.text or ""
@@ -108,7 +128,7 @@ def _replay(path, params, label, fragment=False):
         if fragment:
             resp = identity.replay(path, params, label=label, verdict=_fragment_verdict, headers=XHR_HEADERS)
         else:
-            resp = identity.replay(path, params, label=label)
+            resp = identity.replay(path, params, label=label, verdict=_page_verdict)
     except gfetch.GoogleBlocked as e:
         raise GoogleImagesBlocked(str(e))
     except gfetch.GoogleUpstreamError as e:
